@@ -86,10 +86,12 @@ def get_ou(ouName: str):
         "OU Tree": entry.entry_dn
     }
 
-# Create Organizational Unit
 @app.post("/organizational_unit")
 def create_ou(new_ou_name: str, top_ou: str):
     OU_DN = f"OU={new_ou_name},{top_ou}"
+    
+    # DEBUG PRINT: Check terminal logs when calling curl
+    print(f"DEBUG: Constructing LDAP DN -> '{OU_DN}'")
 
     conn.add(
         dn=OU_DN,
@@ -101,8 +103,8 @@ def create_ou(new_ou_name: str, top_ou: str):
 
     if conn.result["result"] != 0:
         raise HTTPException(
-            status_code = 500,
-            detail = f"Failed to create OU. {conn.result}"
+            status_code=500,
+            detail=f"Failed to create OU at '{OU_DN}'. LDAP Error: {conn.result}"
         )
 
     return {
