@@ -36,16 +36,23 @@ def get_bind_user_pass():
     BIND_USER_PASS = os.getenv("LDAP_BIND_USER_PASS")
     return BIND_USER_PASS
 
-def get_user_ou(city: str):
+def get_user_ou(city: str) -> str:
     """Method to get respective AD-OU based on City"""
-    OU_KEYWORD = OU.get(city)
-    return OU_KEYWORD
+    value = OU.get(city.lower())
+    if value is None:
+        raise ValueError(f"Unsupported city for OU lookup: '{city}'")
+    return value
 
-def get_state(city: str):
+def get_state(city: str) -> str:
     """Method to get respective State based on City"""
-    CITY_STATE = STATE.get(city)
-    return CITY_STATE
+    value = STATE.get(city.lower())
+    if value is None:
+        raise ValueError(f"Unsupported city for state lookup: '{city}'")
+    return value
 
-def get_zipcode(city: str):
-    """Method to respective zipcode based on the location"""
-    CITY_ZIPCODE = ZIPCODE.get(city)
+def get_zipcode(city: str) -> str:
+    """Method to get respective zipcode based on the location"""
+    value = ZIPCODE.get(city.lower())
+    if value is None:
+        raise ValueError(f"Unsupported city for zipcode lookup: '{city}'")
+    return str(value)
