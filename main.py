@@ -1,6 +1,8 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, status
 from ldap3 import Server, Connection, ALL, SUBTREE
-from config import get_ldap_url, get_bind_user, get_bind_user_pass
+from config import get_ldap_url, get_bind_user, get_bind_user_pass, get_user_ou, get_state, get_zipcode
+from humanUserBase import UserCreate, UserResponse
+from models import get_user_dn
 
 app = FastAPI()
 
@@ -54,10 +56,72 @@ def get_user(username: str):
     }
 
 # Create User
-@app.post("/users")
-def create_user():
+@app.post("/users", response_model = UserResponse, status_code=status.HTTP_201_CREATED)
+def create_user(user_in: UserCreate):
+    firstname = user_in.FIRSTNAME
+    lastname = user_in.LASTNAME
+    job_title = user_in.JOBTITLE
+    department = user_in.DEPARTMENT
+    manager_username = user_in.MANAGER
+    city = user_in.CITY
+    password = user_in.PASSWORD
+
+    email = f"{firstname}.{lastname}@homelab.local"
+    username = f"{firstname[0].lower()}{lastname.lower()}"
+    display_name = f"{firstname} {lastname}"
+
+    target_ou = f"OU=Associates,OU=User Accounts,OU={get_user_ou(city)},OU=Accounts,DC=homelab,DC=local"
+
+    state = get_state(city)
+    zipcode = get_zipcode(city)
+    country = "India"
+    company = "Homelab"
+
+    manager_dn = get_user_dn(manager_username)
+
+    user_dn = f"CN={username},{target_ou}"
+
+    attributes = {
+        "cn": username,
+        "givenName": firstname,
+        "sn": lastname,
+        "displayName": display_name,
+        "mail": email,
+        "title": job_title,
+        "department": department,
+        "company": company,
+        "manager": manager_dn,
+        "l": city,
+        "st": state,
+        "postalCode": zipcode,
+        "co": country,
+        "userPrincipalName": f"{username}@homelab.local",
+        "sAMAccountName": username
+    }
+
+    conn.add(
+        dn=user_dn,
+        object_class=[
+            "top",
+            "person",
+            "organizationalPerson",
+            "user"
+        ],
+        attributes=attributes
+    )
+
+    if conn.result["result"] != 0:
+        raise HTTPException (
+            status_code = 500,
+            detail = f"Failed to create user. {conn.result}"
+        )
+    
     return {
-        "message": "User Created sucessfully"
+        "message": "User Created sucessfully",
+        "user_details": {
+            "username": username,
+            "Email": email
+        }
     }
 
 # Find Organizational Unit
