@@ -1,17 +1,12 @@
 from fastapi import FastAPI, HTTPException, status
-from ldap3 import Server, Connection, ALL, SUBTREE
-from config import get_ldap_url, get_bind_user, get_bind_user_pass, get_user_ou, get_state, get_zipcode
+from ldap3 import SUBTREE
+from ldap3.extend.microsoft.modifyPassword import ad_modify_password
+from config import get_user_ou, get_state, get_zipcode
 from humanUserBase import UserCreate, UserResponse
 from models import get_user_dn
+from ldap_connection import conn
 
 app = FastAPI()
-
-LDAP_URL = get_ldap_url()
-BIND_USER = get_bind_user()
-BIND_USER_PASS = get_bind_user_pass()
-
-server = Server(LDAP_URL, get_info=ALL)
-conn = Connection(server, user=BIND_USER, password=BIND_USER_PASS, auto_bind=True)
 
 # Home
 @app.get("/")
@@ -64,20 +59,45 @@ def create_user(user_in: UserCreate):
     department = user_in.DEPARTMENT
     manager_username = user_in.MANAGER
     city = user_in.CITY
-    password = user_in.PASSWORD
+    city = city.lower()
+    location = city.capitalize()
+    password = user_in.PASSWORD.get_secret_value()
 
     email = f"{firstname}.{lastname}@homelab.local"
     username = f"{firstname[0].lower()}{lastname.lower()}"
     display_name = f"{firstname} {lastname}"
 
-    target_ou = f"OU=Associates,OU=User Accounts,OU={get_user_ou(city)},OU=Accounts,DC=homelab,DC=local"
-
-    state = get_state(city)
-    zipcode = get_zipcode(city)
+    try:
+        target_ou = f"OU=Associates,OU=User Accounts,OU={get_user_ou(city)},OU=Accounts,DC=homelab,DC=local"
+        state = get_state(city)
+        zipcode = get_zipcode(city)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e)
+        )
     country = "India"
     company = "Homelab"
 
+    BASE_DN = "OU=accounts,DC=homelab,DC=local"
+    conn.search(
+        search_base=BASE_DN,
+        search_filter=f"(|(cn={username})(sAMAccountName={username}))",
+        search_scope=SUBTREE,
+        attributes=["cn"]
+    )
+    if conn.entries:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"User '{username}' already exists in AD"
+        )
+
     manager_dn = get_user_dn(manager_username)
+    if manager_dn is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Manager '{manager_username}' not found in AD"
+        )
 
     user_dn = f"CN={username},{target_ou}"
 
@@ -91,7 +111,7 @@ def create_user(user_in: UserCreate):
         "department": department,
         "company": company,
         "manager": manager_dn,
-        "l": city,
+        "l": location,
         "st": state,
         "postalCode": zipcode,
         "co": country,
@@ -112,12 +132,31 @@ def create_user(user_in: UserCreate):
 
     if conn.result["result"] != 0:
         raise HTTPException (
-            status_code = 500,
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail = f"Failed to create user. {conn.result}"
         )
     
+    password_set = ad_modify_password(conn, user_dn, password, None)
+    if not password_set:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"User created but failed to set password. {conn.result}"
+        )
+
+    conn.modify(
+        user_dn,
+        {
+            "userAccountControl": [("MODIFY_REPLACE", [512])]
+        }
+    )
+    if conn.result["result"] != 0:
+        raise HTTPException (
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail = f"Failed to Enable user. {conn.result}"
+        )
+
     return {
-        "message": "User Created sucessfully",
+        "message": "User Created successfully",
         "user_details": {
             "username": username,
             "Email": email
